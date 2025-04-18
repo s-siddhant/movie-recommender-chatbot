@@ -1,10 +1,13 @@
-import openai, os
+import openai
+import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Updated OpenAI client initialization
 client = openai.OpenAI(
-    base_url="https://api.groq.com/openai/v1",
-    api_key=os.getenv("GROQ_API_KEY")
+    api_key=os.getenv("GROQ_API_KEY"),
+    base_url="https://api.groq.com/openai/v1"
 )
 
 def extract_themes_from_reviews(reviews):
@@ -31,7 +34,7 @@ Format the response with clear headers and bullet points.
     )
     return res.choices[0].message.content.strip()
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
     reviews = [
         "The acting was phenomenal, especially the lead actor.",
         "I loved the cinematography and the pacing was perfect.",

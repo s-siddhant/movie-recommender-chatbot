@@ -4,10 +4,13 @@
 # Python virtual environment
 .venv/
 venv/
+mv_venv/
+env/
 
 # Python cache files
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # IDE specific files
 .vscode/
@@ -19,3 +22,23 @@ cache/
 
 # Log files
 *.log
+
+# Data and model files
+*.pkl
+*.faiss
+movie_vectors.*
+movie_data.*
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Development files
+*.swp
+.DS_Store
+Thumbs.db
