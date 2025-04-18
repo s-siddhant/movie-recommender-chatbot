@@ -10,37 +10,55 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@app.route("/recommend", methods=["POST"])
-def recommend():
+@app.route("/initialize", methods=["POST"])
+def initialize_chat():
     try:
         data = request.get_json()
-        user_input = data.get("movie")
+        movie_name = data.get("movie")
 
-        if not user_input:
+        if not movie_name:
             return jsonify({"error": "No movie input provided"}), 400
         
-        # Get response from chatbot
-        logger.info(f"Processing request for movie: {user_input}")
-        response = chat_about_movie(user_input)
+        # Get initial analysis and context
+        logger.info(f"Initializing chat for movie: {movie_name}")
+        response = chat_about_movie(movie_name)
         
-        # Return the response with proper structure
-        if isinstance(response, dict) and "text" in response:
+        if isinstance(response, dict):
             return jsonify({
-                "response": {
-                    "text": response["text"],
-                    "context": response.get("context", {})
-                },
-                "error": None
+                "success": True,
+                "initial_response": "Here are some recommendations based on your selection:",
+                "recommendations": response.get("text", ""),
+                "context": response.get("context", {})
             })
         else:
-            return jsonify({
-                "response": {"text": str(response)},
-                "error": None
-            })
-            
+            return jsonify({"error": "Failed to analyze movie"}), 500
+
     except Exception as e:
-        logger.error(f"Error processing request: {str(e)}", exc_info=True)
+        logger.error(f"Error initializing chat: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/chat", methods=["POST"])
+def chat():
+    try:
+        data = request.get_json()
+        user_input = data.get("message")
+        context = data.get("context")
+
+        if not user_input or not context:
+            return jsonify({"error": "Missing message or context"}), 400
+
+        # Get response using context
+        logger.info(f"Processing chat message: {user_input}")
+        response = chat_about_movie(user_input, {"context": context})
+
+        return jsonify({
+            "response": response["text"],
+            "context": response.get("context", context)
+        })
+
+    except Exception as e:
+        logger.error(f"Error in chat: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run()
+    app.run(debug=True)
