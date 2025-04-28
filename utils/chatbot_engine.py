@@ -1,8 +1,10 @@
-from utils.tmdb_utils import search_movie, get_similar_movies
-from utils.reddit_scraper import fetch_reddit_comments
+from utils.tmdb_utils import search_movie, get_similar_movies, get_movie_details
+from utils.comment_fetcher import fetch_all_reviews
 from utils.opinion_mining import extract_themes_from_reviews
+import chromadb
 import openai
 import os
+import json
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -11,17 +13,59 @@ client = openai.OpenAI(
     api_key=os.getenv("GROQ_API_KEY")
 )
 
-def generate_rag_response(query, context, movie_title):
+# Initialize ChromaDB
+chroma_client = chromadb.Client()
+movie_collection = chroma_client.create_collection(
+    name="movie_knowledge_base",
+    metadata={"description": "Movie information, reviews, and analyses"}
+)
+
+def store_movie_data(movie_id, movie_details, reviews, analysis):
+    """Store movie data in vector database"""
+    # Create a unique document ID
+    doc_id = f"movie_{movie_id}"
+    
+    # Combine all movie information into a single document
+    movie_doc = {
+        "title": movie_details["title"],
+        "overview": movie_details["overview"],
+        "genres": ", ".join(movie_details["genres"]),
+        "director": movie_details["director"],
+        "cast": ", ".join(movie_details["cast"]),
+        "reviews": "\n".join([r["text"] for r in reviews]),
+        "analysis": analysis
+    }
+    
+    # Store in ChromaDB
+    movie_collection.add(
+        documents=[json.dumps(movie_doc)],
+        metadatas=[{"movie_id": movie_id, "title": movie_details["title"]}],
+        ids=[doc_id]
+    )
+    return doc_id
+
+def query_movie_knowledge(query, n_results=3):
+    """Query the vector database for relevant movie information"""
+    results = movie_collection.query(
+        query_texts=[query],
+        n_results=n_results
+    )
+    return [json.loads(doc) for doc in results["documents"][0]]
+
+def generate_rag_response(query, relevant_info):
+    """Generate response using RAG approach"""
     prompt = f"""
-        As a movie expert chatbot, use the following movie analysis data to answer the question:
+    As a movie expert chatbot, use the following movie information to answer the question:
 
-        Main Movie: {movie_title}
-        Analysis Context: {context}
+    Relevant Movie Information:
+    {json.dumps(relevant_info, indent=2)}
 
-        User Query: {query}
+    User Query: {query}
 
-        Provide a detailed response based only on the available analysis data.
+    Provide a detailed response based on the available information. If specific information
+    is not available in the context, acknowledge that limitation in your response.
     """
+    
     response = client.chat.completions.create(
         model="llama3-70b-8192",
         messages=[{"role": "user", "content": prompt}]
@@ -29,67 +73,80 @@ def generate_rag_response(query, context, movie_title):
     return response.choices[0].message.content.strip()
 
 def chat_about_movie(user_input, conversation_history=None):
-    if conversation_history is None:
-        # Initial movie search and analysis
-        movie = search_movie(user_input)
-        if not movie:
-            return "Couldn't find the movie. Try another one.", None
+    """Main chatbot function"""
+    try:
+        if conversation_history is None:
+            # Initial movie search
+            movie_id = search_movie(user_input)
 
-        # Build knowledge base
-        movie_analyses = {}
-        similar_movies = get_similar_movies(movie["id"])
-        
-        # Analyze main movie
-        reviews = fetch_reddit_comments(movie["title"])
-        main_movie_analysis = extract_themes_from_reviews(reviews)
+            if not movie_id:
+                return {"response": "Couldn't find the movie. Try another one."}
 
-        # Analyze similar movies
-        for similar_title in similar_movies[:3]:
-            similar_reviews = fetch_reddit_comments(similar_title)
-            if similar_reviews:
-                analysis = extract_themes_from_reviews(similar_reviews)
-                movie_analyses[similar_title] = analysis
+            # Gather movie information
+            movie_details = get_movie_details(movie_id)
+            reviews = fetch_all_reviews(movie_details["title"])
+            analysis = extract_themes_from_reviews([r["text"] for r in reviews])
+            
+            # Store in vector database
+            doc_id = store_movie_data(movie_id, movie_details, reviews, analysis)
+            
+            # Get similar movies
+            similar_movies = get_similar_movies(movie_id)
+            for similar in similar_movies[:3]:
+                similar_reviews = fetch_all_reviews(similar["title"])
+                similar_analysis = extract_themes_from_reviews([r["text"] for r in similar_reviews])
+                store_movie_data(similar["id"], similar, similar_reviews, similar_analysis)
 
-        # Initial recommendation response
-        context = {
-            "main_movie": movie["title"],
-            "main_analysis": main_movie_analysis,
-            "similar_movies": movie_analyses
-        }
-
-        initial_prompt = f"""
-            Based on the analysis of {movie['title']} and similar movies, provide a brief overview 
-            and recommendations. Focus on thematic connections and similar viewing experiences.
-        """
-        recommendation = generate_rag_response(initial_prompt, context, movie["title"])
-        
-        return {
-            "response": recommendation,
-            "context": context,
-            "message": "You can ask me specific questions about these movies or request more details!"
-        }
-    else:
-        # Handle follow-up questions using RAG
-        return generate_rag_response(
-            user_input,
-            conversation_history["context"],
-            conversation_history["context"]["main_movie"]
-        )
+            # Get recommended movies
+            similar_movies = get_similar_movies(movie_id)
+            for similar in similar_movies[:3]:
+                similar_reviews = fetch_all_reviews(similar["title"])
+                similar_analysis = extract_themes_from_reviews([r["text"] for r in similar_reviews])
+                store_movie_data(similar["id"], similar, similar_reviews, similar_analysis)
+            
+            # Format the analysis response
+            analysis_json = json.loads(analysis)  # Parse the JSON string
+            themes_response = (
+                f"Analysis of {movie_details['title']} Reviews:\n\n"
+                f"Emotional Tone: {analysis_json.get('Emotional Tone', 'N/A')}\n"
+                f"Overall Sentiment: {analysis_json.get('Sentiment', 'N/A')}\n\n"
+                f"Pros:\n- {'\n- '.join(analysis_json.get('Pros', []))}\n\n"
+                f"Cons:\n- {'\n- '.join(analysis_json.get('Cons', []))}\n\n"
+                f"Key Themes:\n- {'\n- '.join(analysis_json.get('Key Themes', []))}\n\n"
+                f"Summary: {analysis_json.get('Summary', 'N/A')}\n"
+                f"Sentiment Rating: {analysis_json.get('Sentiment rating', 'N/A')}/10"
+            )
+            
+            return {
+                "response": themes_response,
+                "message": "You can ask me specific questions about these movies!",
+                "movie_id": movie_id,
+                "analysis": analysis  # Store analysis for future reference
+            }
+            
+        else:
+            # Handle follow-up questions
+            relevant_info = query_movie_knowledge(user_input)
+            response = generate_rag_response(user_input, relevant_info)
+            return {"response": response}
+            
+    except Exception as e:
+        return {"response": f"Error: {str(e)}"}
 
 if __name__ == "__main__":
-    # Initial conversation
+    # Test conversation
     result = chat_about_movie("Inception")
     print("Initial Analysis:", result["response"])
     print(result["message"])
 
-    # Example follow-up questions using RAG
+    # Test follow-up questions
     follow_up_questions = [
-        "What are the main themes shared between these movies?",
-        "Which movie has the most positive audience reception?",
-        "Compare the visual effects in these movies"
+        "What are the main themes of this movie?",
+        "How do viewers rate this movie?",
+        "What are similar movies I might enjoy?"
     ]
 
     for question in follow_up_questions:
-        response = chat_about_movie(question, result)
+        response = chat_about_movie(question, {"movie_id": result["movie_id"]})
         print(f"\nQ: {question}")
-        print(f"A: {response}")
+        print(f"A: {response['response']}")

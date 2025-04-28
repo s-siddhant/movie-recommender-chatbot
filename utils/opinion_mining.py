@@ -16,14 +16,15 @@ Reviews to analyze:
 {joined}
 
 Please provide analysis in this format:
-1. Emotional Tone: Overall emotional response of viewers (positive/negative/mixed)
-2. Pros: List 2-3 most praised elements
-3. Cons: List 2-3 most criticized elements
-4. Key Themes: 2-3 recurring themes or patterns
-5. Summary: 2-3 sentence overview
-6. Overall Rating: Estimate average rating out of 10 based on sentiment
+1. Emotional Tone: Key emotions expressed (e.g., excitement, disappointment)
+2. Sentiment: Overall sentiment (positive/negative/mixed)
+3. Pros: List 2-3 most praised elements
+4. Cons: List 2-3 most criticized elements
+5. Key Themes: 2-3 recurring themes or patterns
+6. Summary: 2-3 sentence overview
+7. Sentiment rating: Estimate average rating out of 10 based on sentiment
 
-Format the response with clear headers and bullet points.
+Format the response as a JSON object, use as few words as possible, and avoid unnecessary details.
 """
     res = client.chat.completions.create(
         model="llama3-70b-8192",
